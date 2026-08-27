@@ -428,10 +428,95 @@ function TeamForm({ onSaved }) {
   );
 }
 
+function StatCard({ label, value }) {
+  return (
+    <div className="bg-white rounded-lg border border-[#E3DECF] px-4 py-3 flex-1 min-w-[120px]">
+      <p className="text-[10px] uppercase tracking-wide text-[#B4AF9C]">{label}</p>
+      <p style={{ fontFamily: "Teko, sans-serif" }} className="text-3xl font-semibold text-[#101C33] leading-none mt-1">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function csvEscape(val) {
+  const s = val === null || val === undefined ? "" : String(val);
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function exportRosterCsv(teams) {
+  const rows = [
+    [
+      "Team",
+      "Jersey Colour",
+      "Combined",
+      "Church 1",
+      "Church 2",
+      "Pastor 1",
+      "Pastor 1 Contact",
+      "Endorsement Uploaded",
+      "Role",
+      "Squad #",
+      "Full Name",
+      "Person Church",
+      "Phone",
+      "Member Since",
+      "Signed",
+    ],
+  ];
+
+  teams.forEach((t) => {
+    const people = [...t.people].sort((a, b) => {
+      const order = { manager: 0, assistant: 1, player: 2 };
+      if (order[a.role] !== order[b.role]) return order[a.role] - order[b.role];
+      return (a.squad_number || 0) - (b.squad_number || 0);
+    });
+    const base = [
+      t.team_name,
+      t.jersey_colour,
+      t.combined ? "Yes" : "No",
+      t.church1,
+      t.church2 || "",
+      t.pastor1_name,
+      t.pastor1_contact,
+      t.endorsement_photo_url ? "Yes" : "No",
+    ];
+    if (people.length === 0) {
+      rows.push([...base, "", "", "", "", "", "", ""]);
+    } else {
+      people.forEach((p) => {
+        rows.push([
+          ...base,
+          p.role,
+          p.squad_number || "",
+          p.full_name,
+          p.church,
+          p.phone,
+          p.member_since,
+          p.signed_name ? "Yes" : "No",
+        ]);
+      });
+    }
+  });
+
+  const csv = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `cfb-registrations-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function RosterView() {
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(null);
+  const [query, setQuery] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -464,14 +549,69 @@ function RosterView() {
     );
   }
 
+  const totalTeams = teams.length;
+  const totalPlayers = teams.reduce((sum, t) => sum + t.people.filter((p) => p.role === "player").length, 0);
+  const totalPeople = teams.reduce((sum, t) => sum + t.people.length, 0);
+  const missingEndorsement = teams.filter((t) => !t.endorsement_photo_url).length;
+
+  const q = query.trim().toLowerCase();
+  const filteredTeams = q
+    ? teams.filter((t) => {
+        const haystack = [
+          t.team_name,
+          t.church1,
+          t.church2,
+          t.pastor1_name,
+          ...t.people.map((p) => p.full_name),
+          ...t.people.map((p) => p.church),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(q);
+      })
+    : teams;
+
   return (
-    <div className="max-w-3xl mx-auto space-y-3 pb-24">
-      <div className="flex justify-end">
-        <button onClick={load} className="text-xs text-[#8A8570] hover:text-[#101C33] mb-2">
-          ↻ Refresh
-        </button>
+    <div className="max-w-3xl mx-auto space-y-5 pb-24">
+      <div className="flex flex-wrap gap-3">
+        <StatCard label="Teams registered" value={totalTeams} />
+        <StatCard label="Total players" value={totalPlayers} />
+        <StatCard label="Total people" value={totalPeople} />
+        <StatCard label="Missing endorsement" value={missingEndorsement} />
       </div>
-      {teams.map((t) => {
+
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <input
+          className={inputCls + " sm:flex-1"}
+          placeholder="Search by team, church, pastor, or person name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={() => exportRosterCsv(teams)}
+            className="text-xs font-medium text-[#101C33] border border-[#101C33] rounded px-3 py-2 hover:bg-[#101C33] hover:text-white transition whitespace-nowrap"
+          >
+            ⬇ Export CSV
+          </button>
+          <button onClick={load} className="text-xs text-[#8A8570] hover:text-[#101C33] px-2">
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+
+      {query && (
+        <p className="text-xs text-[#8A8570] -mt-2">
+          {filteredTeams.length} of {totalTeams} teams match "{query}"
+        </p>
+      )}
+
+      {filteredTeams.length === 0 && (
+        <p className="text-center text-[#8A8570] text-sm py-12">No teams match that search.</p>
+      )}
+
+      {filteredTeams.map((t) => {
         const isOpen = open === t.id;
         const manager = t.people.find((p) => p.role === "manager");
         const assistant = t.people.find((p) => p.role === "assistant");
